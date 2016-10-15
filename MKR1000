@@ -1,0 +1,160 @@
+#include <MQTTClient.h>
+#include <ArduinoJson.h>
+#include <SPI.h>
+#include <WiFi101.h>
+
+const char* _SSID     = "********"; //Wi-Fi SSID 
+const char* _PASSWORD = "********"; // Wi-Fi Password 
+
+// MQTT - Artik Cloud Server params
+char Artik_Cloud_Server[]     = "api.artik.cloud"; // Server 
+int  Artik_Cloud_Port         = 8883; // MQTT Port
+char Client_Name[] = "momososo-mrk1000"; // Any Name 
+char Device_ID[]   = "Device_ID"; // DEVICE ID
+char Device_TOKEN[]   = "Device_TOKEN"; //  DEVICE TOKEN
+char MQTT_Publish[]      = "/v1.1/messages/Device_ID"; // (/v1.1/messages/"DEVICE ID")
+char MQTT_Subscription[] = "/v1.1/actions/Device_ID"; // (/v1.1/actions/"DEVICE ID")
+
+char buf[200]; // Json Data to Artik Cloud 
+char receivebuf[200]; // Json Data to Artik Cloud 
+WiFiSSLClient client;
+MQTTClient MQTT_Artik_Client; // MQTT Protocol
+
+//led SET
+const int RED_LEDPin = 0;
+const int GREEN_LEDPin = 1;
+const int BLUE_LEDPin = 2;
+const int BROADLEDPin = 6;
+boolean toggle;
+int LED_state[3] = {0};
+
+void messageReceived(String topic, String payload, char * bytes, unsigned int length) {
+  Serial.print("incoming: ");
+  Serial.print(topic);
+  Serial.print(" - ");
+  Serial.print(payload);
+  Serial.println();
+  String t = topic;
+  //String s = payload;
+  //float temp = s.toFloat();
+
+  if(t == MQTT_Subscription)
+  {
+    parseBuffer(payload);
+  }
+}
+
+void digitalWriteuser(int Pin, boolean state)
+{
+  digitalWrite(Pin, state);
+  LED_state[Pin]=state;
+}
+
+void setup() {
+
+  Serial.begin(57600);  
+  // Wifi Setting
+  WiFi.begin(_SSID, _PASSWORD);
+  while (WiFi.status() != WL_CONNECTED) {
+    delay(500);
+    Serial.print(".");
+  }
+  Serial.println("");
+  Serial.println("WiFi connected");
+  Serial.println("IP address: ");
+  Serial.println(WiFi.localIP());
+  MQTT_Artik_Client.begin(Artik_Cloud_Server, Artik_Cloud_Port, client); // Connect to Artik Server
+  while (!MQTT_Artik_Client.connect(Client_Name, Device_ID, Device_TOKEN)) { // Connect to Artik IOT Device 
+    Serial.print("*");
+    delay(1000);
+  }
+  MQTT_Artik_Client.subscribe(MQTT_Subscription);
+
+  pinMode(RED_LEDPin, OUTPUT);
+  pinMode(GREEN_LEDPin, OUTPUT);
+  pinMode(BLUE_LEDPin, OUTPUT);
+  pinMode(BROADLEDPin, OUTPUT);
+  digitalWriteuser(RED_LEDPin, LOW);
+  digitalWriteuser(GREEN_LEDPin, HIGH);
+  digitalWriteuser(BLUE_LEDPin, HIGH);
+  
+}
+
+void loadBuffer(void) {
+  StaticJsonBuffer<200> jsonBuffer;
+  JsonObject& dataPair0 = jsonBuffer.createObject();
+  JsonObject& dataPair1 = jsonBuffer.createObject();
+  dataPair1["D0"] = LED_state[RED_LEDPin];
+  dataPair1["D1"] = LED_state[GREEN_LEDPin];
+  dataPair1["D2"] = LED_state[BLUE_LEDPin];
+  dataPair0["Digital_I_O"]=dataPair1;
+  dataPair0.printTo(buf, sizeof(buf));
+  Serial.println(buf);
+}
+void parseBuffer(String _payload) {
+  StaticJsonBuffer<200> jsonBuffer;
+  String json = _payload;
+  
+  json.toCharArray(receivebuf,200);
+
+  //*****************************
+  JsonObject& root = jsonBuffer.parseObject(receivebuf);
+  if (!root.success()) {
+    Serial.println("parseObject() failed");
+  }
+  //****************************
+  
+  const char* nameparam = root["actions"][0]["name"];
+  boolean actionD0 = root["actions"][0]["parameters"]["D0"];
+  byte actionD1 = root["actions"][0]["parameters"]["D1"];
+  long actionD2 = root["actions"][0]["parameters"]["D2"];
+
+  Serial.println(nameparam);
+  Serial.print("D0:");
+  Serial.println(actionD0);
+  Serial.print("D1:");
+  Serial.println(actionD1);
+  Serial.print("D2:");
+  Serial.println(actionD2);
+  
+  if (actionD0 == 1) 
+  {
+     digitalWriteuser(RED_LEDPin, HIGH);
+  }
+  if (actionD0 == 0) 
+  {
+     digitalWriteuser(RED_LEDPin, LOW);
+  }
+  if (actionD1 == 1) 
+  {
+     digitalWriteuser(GREEN_LEDPin, HIGH);
+  }
+  if (actionD1 == 0) 
+  {
+     digitalWriteuser(GREEN_LEDPin, LOW);
+  }
+  if (actionD2 == 1) 
+  {
+     digitalWriteuser(BLUE_LEDPin, HIGH);
+  }
+  if (actionD2 == 0) 
+  {
+     digitalWriteuser(BLUE_LEDPin, LOW);
+  }
+}
+void loop() {
+  loadBuffer();
+  MQTT_Artik_Client.publish(MQTT_Publish, buf);// Publishing data to the Artik Cloud 
+  Serial.println("Publishing..");
+  //delay(3000);
+
+  for (int i =0; i<100;i++){ // delay 10 Mnts ( as per Artik Free package specifications) 
+    MQTT_Artik_Client.loop();
+    toggle = !toggle;
+    digitalWrite(BROADLEDPin, toggle);
+    //Serial.println(buf);
+    delay(6000);
+  }  
+  MQTT_Artik_Client.loop();
+  delay(10); 
+}
